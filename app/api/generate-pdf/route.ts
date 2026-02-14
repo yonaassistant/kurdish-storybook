@@ -14,6 +14,17 @@ interface PDFRequest {
   characterImageUrl: string;
 }
 
+// Helper to check if text contains only ASCII characters
+function isASCII(str: string): boolean {
+  return /^[\x00-\x7F]*$/.test(str);
+}
+
+// Helper to clean text for PDF (remove non-ASCII)
+function cleanForPDF(text: string): string {
+  // Only keep ASCII characters, replace others with transliteration hint
+  return text.replace(/[^\x00-\x7F]/g, '?');
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { childName, languages, storyContent, characterImageUrl }: PDFRequest =
@@ -27,6 +38,18 @@ export async function POST(request: NextRequest) {
     }
 
     console.log('Starting PDF generation for:', childName);
+    console.log('Languages requested:', languages);
+
+    // Filter to only English for now (standard fonts can't handle Kurdish/Arabic)
+    const pdfLanguages = languages.filter(lang => lang === 'en');
+    
+    // If no English, use first language but warn
+    if (pdfLanguages.length === 0) {
+      console.warn('No English language selected, PDF may have encoding issues');
+      pdfLanguages.push(languages[0]);
+    }
+
+    console.log('PDF will use languages:', pdfLanguages);
 
     // Create PDF document
     const pdfDoc = await PDFDocument.create();
@@ -48,7 +71,10 @@ export async function POST(request: NextRequest) {
       fontSize: number,
       font: any
     ): number => {
-      const words = text.split(' ');
+      // Clean text of non-ASCII characters
+      const cleanText = isASCII(text) ? text : cleanForPDF(text);
+      
+      const words = cleanText.split(' ');
       let line = '';
       let currentY = y;
       const lineHeight = fontSize * 1.2;
@@ -79,9 +105,10 @@ export async function POST(request: NextRequest) {
     // Cover Page
     const coverPage = pdfDoc.addPage([pageWidth, pageHeight]);
     
-    // Title
-    const titleLang = languages[0];
-    const title = storyContent.title[titleLang] || 'Story Book';
+    // Title (use English or first language)
+    const titleLang = pdfLanguages[0];
+    const titleRaw = storyContent.title[titleLang] || 'Story Book';
+    const title = isASCII(titleRaw) ? titleRaw : cleanForPDF(titleRaw);
     const titleFontSize = 32;
     const titleWidth = boldFont.widthOfTextAtSize(title, titleFontSize);
     
@@ -93,8 +120,9 @@ export async function POST(request: NextRequest) {
       color: rgb(0.2, 0.3, 0.6),
     });
 
-    // Child's name
-    const subtitle = `A story for ${childName}`;
+    // Child's name (clean for ASCII)
+    const cleanChildName = isASCII(childName) ? childName : cleanForPDF(childName);
+    const subtitle = `A story for ${cleanChildName}`;
     const subtitleFontSize = 18;
     const subtitleWidth = font.widthOfTextAtSize(subtitle, subtitleFontSize);
     
@@ -106,7 +134,7 @@ export async function POST(request: NextRequest) {
       color: rgb(0.4, 0.4, 0.4),
     });
 
-    // Add decorative text instead of emoji (emojis don't work with standard fonts)
+    // Add decorative text instead of emoji
     const decorativeText = '* * *';
     const decorativeWidth = font.widthOfTextAtSize(decorativeText, 48);
     coverPage.drawText(decorativeText, {
@@ -116,6 +144,19 @@ export async function POST(request: NextRequest) {
       font: boldFont,
       color: rgb(0.3, 0.4, 0.7),
     });
+
+    // Add note about Kurdish text
+    if (languages.includes('ku') || languages.includes('ar')) {
+      const note = '(English version - Kurdish/Arabic fonts not yet supported)';
+      const noteWidth = font.widthOfTextAtSize(note, 10);
+      coverPage.drawText(note, {
+        x: (pageWidth - noteWidth) / 2,
+        y: 100,
+        size: 10,
+        font: font,
+        color: rgb(0.5, 0.5, 0.5),
+      });
+    }
 
     console.log('Creating story pages...');
 
@@ -134,18 +175,18 @@ export async function POST(request: NextRequest) {
       });
       currentY -= 40;
 
-      // If multiple languages, create columns
-      if (languages.length === 1) {
+      // Only render English text for now
+      if (pdfLanguages.length === 1) {
         // Single language - full width
-        const text = pageData.text[languages[0]] || '';
+        const text = pageData.text[pdfLanguages[0]] || '';
         addWrappedText(storyPage, text, margin, currentY, contentWidth, 16, font);
-      } else if (languages.length === 2) {
-        // Two languages - side by side
+      } else if (pdfLanguages.length === 2) {
+        // Two languages - side by side (both must be ASCII-safe)
         const columnWidth = (contentWidth - 20) / 2;
         
-        // Left column (first language)
-        const text1 = pageData.text[languages[0]] || '';
-        storyPage.drawText(`[${languages[0].toUpperCase()}]`, {
+        // Left column
+        const text1 = pageData.text[pdfLanguages[0]] || '';
+        storyPage.drawText(`[${pdfLanguages[0].toUpperCase()}]`, {
           x: margin,
           y: currentY,
           size: 10,
@@ -154,9 +195,9 @@ export async function POST(request: NextRequest) {
         });
         addWrappedText(storyPage, text1, margin, currentY - 20, columnWidth, 14, font);
 
-        // Right column (second language)
-        const text2 = pageData.text[languages[1]] || '';
-        storyPage.drawText(`[${languages[1].toUpperCase()}]`, {
+        // Right column
+        const text2 = pageData.text[pdfLanguages[1]] || '';
+        storyPage.drawText(`[${pdfLanguages[1].toUpperCase()}]`, {
           x: margin + columnWidth + 20,
           y: currentY,
           size: 10,
@@ -180,12 +221,11 @@ export async function POST(request: NextRequest) {
       try {
         console.log('Attempting to send to Telegram...');
         
-        // Use multipart form data with fetch
         const formData = new FormData();
         const blob = new Blob([pdfBuffer], { type: 'application/pdf' });
         formData.append('chat_id', process.env.TELEGRAM_CHAT_ID);
-        formData.append('document', blob, `${childName}-storybook.pdf`);
-        formData.append('caption', `📚 ${childName}'s Storybook is ready!\n\nLanguages: ${languages.map(l => l.toUpperCase()).join(' + ')}\n\nGenerated with love ❤️`);
+        formData.append('document', blob, `${cleanChildName}-storybook.pdf`);
+        formData.append('caption', `📚 ${cleanChildName}'s Storybook is ready!\n\nLanguages: ${languages.map(l => l.toUpperCase()).join(' + ')}\n\n(English-only PDF for now - Kurdish/Arabic font support coming soon!)`);
         
         const telegramRes = await fetch(
           `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendDocument`,
@@ -203,7 +243,6 @@ export async function POST(request: NextRequest) {
         }
       } catch (telegramError) {
         console.error('Failed to send to Telegram:', telegramError);
-        // Continue anyway - still return the PDF
       }
     }
 
@@ -212,7 +251,7 @@ export async function POST(request: NextRequest) {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="${childName}-storybook.pdf"`,
+        'Content-Disposition': `attachment; filename="${cleanChildName}-storybook.pdf"`,
       },
     });
   } catch (error) {
