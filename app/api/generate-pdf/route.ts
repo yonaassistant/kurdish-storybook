@@ -106,11 +106,15 @@ export async function POST(request: NextRequest) {
       color: rgb(0.4, 0.4, 0.4),
     });
 
-    // Add emoji
-    coverPage.drawText('📚', {
-      x: (pageWidth - 50) / 2,
+    // Add decorative text instead of emoji (emojis don't work with standard fonts)
+    const decorativeText = '* * *';
+    const decorativeWidth = font.widthOfTextAtSize(decorativeText, 48);
+    coverPage.drawText(decorativeText, {
+      x: (pageWidth - decorativeWidth) / 2,
       y: pageHeight / 2,
-      size: 72,
+      size: 48,
+      font: boldFont,
+      color: rgb(0.3, 0.4, 0.7),
     });
 
     console.log('Creating story pages...');
