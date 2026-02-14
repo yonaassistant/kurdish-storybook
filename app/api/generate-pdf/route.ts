@@ -166,7 +166,7 @@ export async function POST(request: NextRequest) {
         console.log('Sending to Telegram...');
         
         const formData = new FormData();
-        const blob = new Blob([pdfBuffer], { type: 'application/pdf' });
+        const blob = new Blob([Buffer.from(pdfBuffer)], { type: 'application/pdf' });
         formData.append('chat_id', process.env.TELEGRAM_CHAT_ID);
         formData.append('document', blob, `${childName}-storybook.pdf`);
         formData.append('caption', `📚 ${childName}'s Storybook is ready!\n\nLanguages: ${languages.map(l => l.toUpperCase()).join(' + ')}\n\n✨ Now with Kurdish support & illustrations!`);
