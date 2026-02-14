@@ -114,6 +114,7 @@ export default function Home() {
       const { storyContent } = await storyRes.json();
 
       // Step 3: Generate PDF
+      console.log('Generating PDF...');
       const pdfRes = await fetch('/api/generate-pdf', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -125,8 +126,18 @@ export default function Home() {
         }),
       });
 
+      console.log('PDF response status:', pdfRes.status);
+      console.log('PDF response headers:', pdfRes.headers.get('content-type'));
+
       if (!pdfRes.ok) {
-        throw new Error('Failed to generate PDF');
+        const errorText = await pdfRes.text();
+        console.error('PDF error response:', errorText);
+        try {
+          const errorData = JSON.parse(errorText);
+          throw new Error(errorData.error || 'Failed to generate PDF');
+        } catch {
+          throw new Error(`Failed to generate PDF: ${pdfRes.status} - ${errorText.substring(0, 100)}`);
+        }
       }
 
       // Download PDF
@@ -373,7 +384,7 @@ export default function Home() {
           isDark ? 'text-gray-400' : 'text-gray-600'
         }`}>
           <p>Built with ❤️ for Kurdish children worldwide 🕊️</p>
-          <p className="mt-2 text-xs opacity-60">Version 1.0.3 • 2026-02-14</p>
+          <p className="mt-2 text-xs opacity-60">Version 1.0.4 • 2026-02-14</p>
         </div>
       </div>
     </div>
