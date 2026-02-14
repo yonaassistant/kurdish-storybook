@@ -136,11 +136,10 @@ export async function POST(request: NextRequest) {
         '--no-sandbox',
         '--disable-setuid-sandbox',
       ] : chromium.args,
-      defaultViewport: chromium.defaultViewport,
       executablePath: isDev 
         ? undefined  // Use system Chrome in dev
         : await chromium.executablePath(),
-      headless: chromium.headless,
+      headless: true,
     });
 
     const page = await browser.newPage();
