@@ -68,7 +68,7 @@ Return ONLY valid JSON, no additional text.`;
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-4-turbo-preview',
+        model: 'gpt-4o-mini',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
@@ -80,8 +80,8 @@ Return ONLY valid JSON, no additional text.`;
 
     if (!openaiResponse.ok) {
       const errorData = await openaiResponse.text();
-      console.error('OpenAI API error:', errorData);
-      throw new Error('Failed to generate story from OpenAI');
+      console.error('OpenAI API error:', openaiResponse.status, errorData);
+      throw new Error(`OpenAI API error: ${openaiResponse.status} - ${errorData.substring(0, 200)}`);
     }
 
     const openaiData = await openaiResponse.json();
