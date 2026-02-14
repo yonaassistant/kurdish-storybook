@@ -1,8 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server';
-import puppeteer from 'puppeteer-core';
-import chromium from '@sparticuz/chromium';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+
+// Dynamic imports for better serverless compatibility
+const getPuppeteer = async () => {
+  const isDev = process.env.NODE_ENV === 'development' || !process.env.AWS_EXECUTION_ENV;
+  
+  if (isDev) {
+    // Local development - use full puppeteer
+    const puppeteer = await import('puppeteer');
+    return { 
+      puppeteer: puppeteer.default, 
+      executablePath: undefined,
+      args: []
+    };
+  } else {
+    // Production (Netlify/AWS Lambda) - use puppeteer-core with chromium
+    const puppeteerCore = await import('puppeteer-core');
+    const chromium = await import('@sparticuz/chromium');
+    
+    return { 
+      puppeteer: puppeteerCore.default, 
+      executablePath: await chromium.default.executablePath('/tmp'),
+      args: chromium.default.args
+    };
+  }
+};
 
 interface PDFRequest {
   childName: string;
@@ -118,12 +141,20 @@ export async function POST(request: NextRequest) {
     // Replace template placeholder
     const htmlContent = htmlTemplate.replace('{{PAGES}}', pagesHtml);
 
-    // Launch Puppeteer (serverless-compatible)
-    browser = await puppeteer.launch({
-      args: chromium.args,
-      executablePath: await chromium.executablePath(),
+    // Get Puppeteer (environment-aware)
+    const { puppeteer, executablePath, args } = await getPuppeteer();
+    
+    // Launch browser
+    const launchOptions: any = {
       headless: true,
-    });
+      args: args.length > 0 ? args : ['--no-sandbox', '--disable-setuid-sandbox'],
+    };
+    
+    if (executablePath) {
+      launchOptions.executablePath = executablePath;
+    }
+    
+    browser = await puppeteer.launch(launchOptions);
 
     const page = await browser.newPage();
     await page.setContent(htmlContent, { waitUntil: 'networkidle0' });
