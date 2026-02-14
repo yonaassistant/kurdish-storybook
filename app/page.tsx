@@ -373,7 +373,7 @@ export default function Home() {
           isDark ? 'text-gray-400' : 'text-gray-600'
         }`}>
           <p>Built with ❤️ for Kurdish children worldwide 🕊️</p>
-          <p className="mt-2 text-xs opacity-60">Version 1.0.2 • 2026-02-14</p>
+          <p className="mt-2 text-xs opacity-60">Version 1.0.3 • 2026-02-14</p>
         </div>
       </div>
     </div>
