@@ -175,9 +175,33 @@ export async function POST(request: NextRequest) {
 
     // Serialize PDF to bytes
     const pdfBytes = await pdfDoc.save();
+    const pdfBuffer = Buffer.from(pdfBytes);
+    
+    // Send to Telegram if bot token is configured
+    if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID) {
+      try {
+        const FormData = (await import('form-data')).default;
+        const formData = new FormData();
+        formData.append('chat_id', process.env.TELEGRAM_CHAT_ID);
+        formData.append('document', pdfBuffer, {
+          filename: `${childName}-storybook.pdf`,
+          contentType: 'application/pdf',
+        });
+        formData.append('caption', `📚 ${childName}'s Storybook is ready!\n\nLanguages: ${languages.map(l => l.toUpperCase()).join(' + ')}\n\nGenerated with love ❤️`);
+        
+        await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendDocument`, {
+          method: 'POST',
+          body: formData as any,
+          headers: formData.getHeaders(),
+        });
+      } catch (telegramError) {
+        console.error('Failed to send to Telegram:', telegramError);
+        // Continue anyway - still return the PDF
+      }
+    }
 
-    // Return PDF as response
-    return new NextResponse(Buffer.from(pdfBytes), {
+    // Return PDF as response for download
+    return new NextResponse(pdfBuffer, {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
