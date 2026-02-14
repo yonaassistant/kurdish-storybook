@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import puppeteer from 'puppeteer-core';
-import chromium from '@sparticuz/chromium';
+import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import fontkit from '@pdf-lib/fontkit';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -17,14 +17,11 @@ interface PDFRequest {
   characterImageUrl: string;
 }
 
-// Emojis for illustrations
 const PAGE_EMOJIS = ['🏔️', '🎒', '🌸', '🐰', '🎉', '🌈', '🌅', '⭐'];
 
 export async function POST(request: NextRequest) {
-  let browser;
-  
   try {
-    const { childName, languages, storyContent, characterImageUrl }: PDFRequest =
+    const { childName, languages, storyContent }: PDFRequest =
       await request.json();
 
     if (!childName || !languages || !storyContent) {
@@ -34,168 +31,217 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log('Starting PDF generation with Puppeteer for:', childName);
-    console.log('Languages:', languages);
+    console.log('Generating PDF for:', childName, 'Languages:', languages);
 
-    // Read HTML template
-    const templatePath = join(process.cwd(), 'app/api/generate-pdf/storybook-template.html');
-    let htmlTemplate = readFileSync(templatePath, 'utf-8');
+    // Create PDF
+    const pdfDoc = await PDFDocument.create();
+    pdfDoc.registerFontkit(fontkit);
 
-    // Build pages HTML
-    let pagesHtml = '';
+    // Load fonts
+    const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    
+    // Load Arabic font for Kurdish/Arabic
+    let arabicFont = helvetica; // fallback
+    try {
+      const fontPath = join(process.cwd(), 'public/fonts/NotoSansArabic.ttf');
+      const fontBytes = readFileSync(fontPath);
+      arabicFont = await pdfDoc.embedFont(fontBytes);
+      console.log('Arabic font loaded successfully');
+    } catch (e) {
+      console.warn('Could not load Arabic font, using fallback');
+    }
+
+    const pageWidth = 595;
+    const pageHeight = 842;
+    const margin = 40;
+
+    // Helper to add wrapped text
+    const addText = (page: any, text: string, x: number, y: number, font: any, size: number, maxWidth: number, isRTL = false) => {
+      const words = text.split(' ');
+      let line = '';
+      let currentY = y;
+      const lineHeight = size * 1.4;
+
+      for (const word of words) {
+        const testLine = line + word + ' ';
+        const width = font.widthOfTextAtSize(testLine, size);
+
+        if (width > maxWidth && line) {
+          const xPos = isRTL ? x + maxWidth - font.widthOfTextAtSize(line, size) : x;
+          page.drawText(line.trim(), { x: xPos, y: currentY, size, font, color: rgb(0.2, 0.2, 0.2) });
+          line = word + ' ';
+          currentY -= lineHeight;
+        } else {
+          line = testLine;
+        }
+      }
+      
+      if (line.trim()) {
+        const xPos = isRTL ? x + maxWidth - font.widthOfTextAtSize(line.trim(), size) : x;
+        page.drawText(line.trim(), { x: xPos, y: currentY, size, font, color: rgb(0.2, 0.2, 0.2) });
+        currentY -= lineHeight;
+      }
+      
+      return currentY;
+    };
 
     // Cover page
-    const coverTitle = languages.includes('ku') && storyContent.title.ku
-      ? storyContent.title.ku
-      : storyContent.title.en || storyContent.title[languages[0]] || 'Storybook';
+    const cover = pdfDoc.addPage([pageWidth, pageHeight]);
     
-    const coverSubtitle = languages.includes('en') && storyContent.title.en
-      ? storyContent.title.en
-      : '';
+    // Gradient background effect with rectangles
+    for (let i = 0; i < 10; i++) {
+      const alpha = 0.1 - (i * 0.01);
+      cover.drawRectangle({
+        x: 0,
+        y: pageHeight - (i * 50),
+        width: pageWidth,
+        height: 50,
+        color: rgb(0.4 + (i * 0.05), 0.3 + (i * 0.04), 0.7),
+        opacity: alpha,
+      });
+    }
 
-    pagesHtml += `
-      <div class="page cover-page">
-        <div class="decorative-border">
-          <div class="corner top-left"></div>
-          <div class="corner top-right"></div>
-          <div class="corner bottom-left"></div>
-          <div class="corner bottom-right"></div>
-        </div>
-        <div class="cover-title">${coverTitle}</div>
-        ${coverSubtitle ? `<div class="cover-subtitle">${coverSubtitle}</div>` : ''}
-        <div class="illustration">📚</div>
-        <div class="cover-subtitle">A story for ${childName}</div>
-      </div>
-    `;
+    // Title
+    const titleLang = languages.includes('ku') ? 'ku' : languages[0];
+    const titleFont = titleLang === 'ku' || titleLang === 'ar' ? arabicFont : helveticaBold;
+    const title = storyContent.title[titleLang] || 'Storybook';
+    
+    const titleSize = 36;
+    const titleWidth = titleFont.widthOfTextAtSize(title, titleSize);
+    cover.drawText(title, {
+      x: (pageWidth - titleWidth) / 2,
+      y: pageHeight - 120,
+      size: titleSize,
+      font: titleFont,
+      color: rgb(1, 1, 1),
+    });
+
+    // Subtitle
+    const subtitle = `A story for ${childName}`;
+    const subSize = 20;
+    const subWidth = helvetica.widthOfTextAtSize(subtitle, subSize);
+    cover.drawText(subtitle, {
+      x: (pageWidth - subWidth) / 2,
+      y: pageHeight - 170,
+      size: subSize,
+      font: helvetica,
+      color: rgb(0.9, 0.9, 0.9),
+    });
+
+    // Decorative stars
+    cover.drawText('✨ 📚 ✨', {
+      x: pageWidth / 2 - 50,
+      y: pageHeight / 2,
+      size: 48,
+      font: helvetica,
+    });
 
     // Story pages
     for (const pageData of storyContent.pages) {
-      const emoji = PAGE_EMOJIS[(pageData.pageNumber - 1) % PAGE_EMOJIS.length];
+      const page = pdfDoc.addPage([pageWidth, pageHeight]);
       
-      pagesHtml += `
-        <div class="page story-page">
-          <div class="illustration">${emoji}</div>
-      `;
+      // Colorful border
+      const borderColor = rgb(0.4 + (pageData.pageNumber * 0.05), 0.3 + (pageData.pageNumber * 0.04), 0.7);
+      page.drawRectangle({
+        x: 20,
+        y: 20,
+        width: pageWidth - 40,
+        height: pageHeight - 40,
+        borderColor,
+        borderWidth: 3,
+      });
 
-      // Kurdish text (if available)
+      // Page emoji illustration
+      const emoji = PAGE_EMOJIS[(pageData.pageNumber - 1) % PAGE_EMOJIS.length];
+      page.drawText(emoji, {
+        x: pageWidth / 2 - 30,
+        y: pageHeight - 100,
+        size: 60,
+        font: helvetica,
+      });
+
+      let currentY = pageHeight - 180;
+      const contentWidth = pageWidth - 100;
+
+      // Kurdish text (RTL)
       if (languages.includes('ku') && pageData.text.ku) {
-        pagesHtml += `
-          <div class="text-section">
-            <div class="text-label">🇮🇶 Kurdish</div>
-            <div class="kurdish-text">${pageData.text.ku}</div>
-          </div>
-        `;
+        page.drawText('🇮🇶 Kurdish', {
+          x: margin + 10,
+          y: currentY,
+          size: 12,
+          font: helveticaBold,
+          color: rgb(0.5, 0.3, 0.7),
+        });
+        currentY -= 25;
+
+        currentY = addText(page, pageData.text.ku, margin + 10, currentY, arabicFont, 16, contentWidth, true);
+        currentY -= 30;
       }
 
-      // English text (if available)
+      // English text
       if (languages.includes('en') && pageData.text.en) {
-        pagesHtml += `
-          <div class="text-section">
-            <div class="text-label">🇬🇧 English</div>
-            <div class="english-text">${pageData.text.en}</div>
-          </div>
-        `;
+        page.drawText('🇬🇧 English', {
+          x: margin + 10,
+          y: currentY,
+          size: 12,
+          font: helveticaBold,
+          color: rgb(0.2, 0.4, 0.7),
+        });
+        currentY -= 25;
+
+        currentY = addText(page, pageData.text.en, margin + 10, currentY, helvetica, 16, contentWidth);
+        currentY -= 30;
       }
 
-      // Arabic text (if available)
+      // Arabic text (RTL)
       if (languages.includes('ar') && pageData.text.ar) {
-        pagesHtml += `
-          <div class="text-section">
-            <div class="text-label">🇸🇦 Arabic</div>
-            <div class="kurdish-text">${pageData.text.ar}</div>
-          </div>
-        `;
+        page.drawText('🇸🇦 Arabic', {
+          x: margin + 10,
+          y: currentY,
+          size: 12,
+          font: helveticaBold,
+          color: rgb(0.1, 0.6, 0.3),
+        });
+        currentY -= 25;
+
+        addText(page, pageData.text.ar, margin + 10, currentY, arabicFont, 16, contentWidth, true);
       }
 
-      // Turkish text (if available)
-      if (languages.includes('tr') && pageData.text.tr) {
-        pagesHtml += `
-          <div class="text-section">
-            <div class="text-label">🇹🇷 Turkish</div>
-            <div class="english-text">${pageData.text.tr}</div>
-          </div>
-        `;
-      }
-
-      pagesHtml += `
-          <div class="page-number">Page ${pageData.pageNumber}</div>
-        </div>
-      `;
+      // Page number
+      const pageNumText = `Page ${pageData.pageNumber}`;
+      page.drawText(pageNumText, {
+        x: pageWidth - 80,
+        y: 30,
+        size: 12,
+        font: helvetica,
+        color: rgb(0.5, 0.5, 0.5),
+      });
     }
 
-    // Replace template placeholder
-    const finalHtml = htmlTemplate.replace('{{PAGES}}', pagesHtml);
+    // Save PDF
+    const pdfBytes = await pdfDoc.save();
+    console.log('PDF generated:', pdfBytes.length, 'bytes');
 
-    console.log('Launching Puppeteer...');
-
-    // Launch browser (use local chromium in dev, serverless chromium in production)
-    const isDev = process.env.NODE_ENV === 'development';
-    
-    browser = await puppeteer.launch({
-      args: isDev ? [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-      ] : chromium.args,
-      executablePath: isDev 
-        ? undefined  // Use system Chrome in dev
-        : await chromium.executablePath(),
-      headless: true,
-    });
-
-    const page = await browser.newPage();
-    await page.setContent(finalHtml, { waitUntil: 'networkidle0' });
-
-    console.log('Generating PDF...');
-
-    // Generate PDF
-    const pdfBuffer = await page.pdf({
-      format: 'A4',
-      printBackground: true,
-      margin: {
-        top: '0mm',
-        right: '0mm',
-        bottom: '0mm',
-        left: '0mm',
-      },
-    });
-
-    await browser.close();
-    browser = null;
-
-    console.log('PDF generated successfully, size:', pdfBuffer.length, 'bytes');
-
-    // Send to Telegram if configured
+    // Send to Telegram
     if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID) {
       try {
-        console.log('Sending to Telegram...');
-        
         const formData = new FormData();
-        const blob = new Blob([Buffer.from(pdfBuffer)], { type: 'application/pdf' });
+        const blob = new Blob([pdfBytes], { type: 'application/pdf' });
         formData.append('chat_id', process.env.TELEGRAM_CHAT_ID);
         formData.append('document', blob, `${childName}-storybook.pdf`);
-        formData.append('caption', `📚 ${childName}'s Storybook is ready!\n\nLanguages: ${languages.map(l => l.toUpperCase()).join(' + ')}\n\n✨ Now with Kurdish support & illustrations!`);
+        formData.append('caption', `📚 ${childName}'s Storybook!\n\nLanguages: ${languages.map(l => l.toUpperCase()).join(' + ')}\n\n✨ With Kurdish & Arabic support!`);
         
-        const telegramRes = await fetch(
-          `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendDocument`,
-          {
-            method: 'POST',
-            body: formData,
-          }
-        );
-        
-        if (telegramRes.ok) {
-          console.log('Successfully sent to Telegram');
-        } else {
-          const error = await telegramRes.text();
-          console.error('Telegram API error:', error);
-        }
-      } catch (telegramError) {
-        console.error('Failed to send to Telegram:', telegramError);
+        await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendDocument`, {
+          method: 'POST',
+          body: formData,
+        });
+      } catch (e) {
+        console.error('Telegram send failed:', e);
       }
     }
 
-    // Return PDF
-    return new NextResponse(Buffer.from(pdfBuffer), {
+    return new NextResponse(Buffer.from(pdfBytes), {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
@@ -203,19 +249,9 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('PDF generation error:', error);
-    
-    // Clean up browser if it's still running
-    if (browser) {
-      try {
-        await browser.close();
-      } catch (e) {
-        console.error('Error closing browser:', e);
-      }
-    }
-    
+    console.error('PDF error:', error);
     return NextResponse.json(
-      { error: `Failed to generate PDF: ${error instanceof Error ? error.message : 'Unknown error'}` },
+      { error: `Failed to generate PDF: ${error instanceof Error ? error.message : 'Unknown'}` },
       { status: 500 }
     );
   }
