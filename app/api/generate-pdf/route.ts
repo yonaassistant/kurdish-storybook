@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import puppeteer from 'puppeteer';
+import puppeteer from 'puppeteer-core';
+import chromium from '@sparticuz/chromium';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -127,15 +128,19 @@ export async function POST(request: NextRequest) {
 
     console.log('Launching Puppeteer...');
 
-    // Launch browser
+    // Launch browser (use local chromium in dev, serverless chromium in production)
+    const isDev = process.env.NODE_ENV === 'development';
+    
     browser = await puppeteer.launch({
-      headless: true,
-      args: [
+      args: isDev ? [
         '--no-sandbox',
         '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-      ],
+      ] : chromium.args,
+      defaultViewport: chromium.defaultViewport,
+      executablePath: isDev 
+        ? undefined  // Use system Chrome in dev
+        : await chromium.executablePath(),
+      headless: chromium.headless,
     });
 
     const page = await browser.newPage();

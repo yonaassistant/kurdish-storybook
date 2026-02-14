@@ -10,10 +10,12 @@
   },
   "dependencies": {
     "@pdf-lib/fontkit": "^1.1.1",
+    "@sparticuz/chromium": "^143.0.4",
     "form-data": "^4.0.5",
     "next": "16.1.6",
     "pdf-lib": "^1.17.1",
     "puppeteer": "^24.37.3",
+    "puppeteer-core": "^24.37.3",
     "react": "19.2.3",
     "react-dom": "19.2.3"
   },
