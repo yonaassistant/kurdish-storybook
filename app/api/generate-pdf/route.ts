@@ -41,12 +41,12 @@ export async function POST(request: NextRequest) {
     console.log('Languages requested:', languages);
 
     // Filter to only English for now (standard fonts can't handle Kurdish/Arabic)
-    const pdfLanguages = languages.filter(lang => lang === 'en');
+    const pdfLanguages: string[] = languages.filter(lang => lang === 'en');
     
-    // If no English, use first language but warn
+    // If no English, default to 'en' anyway (we need ASCII)
     if (pdfLanguages.length === 0) {
-      console.warn('No English language selected, PDF may have encoding issues');
-      pdfLanguages.push(languages[0]);
+      console.warn('No English language selected, defaulting to English for PDF');
+      pdfLanguages.push('en');
     }
 
     console.log('PDF will use languages:', pdfLanguages);
