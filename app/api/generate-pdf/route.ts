@@ -26,6 +26,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    console.log('Starting PDF generation for:', childName);
+
     // Create PDF document
     const pdfDoc = await PDFDocument.create();
     const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -72,6 +74,8 @@ export async function POST(request: NextRequest) {
       return currentY;
     };
 
+    console.log('Creating cover page...');
+
     // Cover Page
     const coverPage = pdfDoc.addPage([pageWidth, pageHeight]);
     
@@ -102,14 +106,14 @@ export async function POST(request: NextRequest) {
       color: rgb(0.4, 0.4, 0.4),
     });
 
-    // Add character image to cover (if available)
-    // Note: In production, you'd decode and embed the actual image
-    // For now, we'll add a placeholder text
+    // Add emoji
     coverPage.drawText('📚', {
       x: (pageWidth - 50) / 2,
       y: pageHeight / 2,
       size: 72,
     });
+
+    console.log('Creating story pages...');
 
     // Story Pages
     for (const pageData of storyContent.pages) {
@@ -156,44 +160,43 @@ export async function POST(request: NextRequest) {
           color: rgb(0.4, 0.4, 0.8),
         });
         addWrappedText(storyPage, text2, margin + columnWidth + 20, currentY - 20, columnWidth, 14, font);
-      } else {
-        // More than 2 languages - stack them
-        for (const lang of languages) {
-          const text = pageData.text[lang] || '';
-          storyPage.drawText(`[${lang.toUpperCase()}]`, {
-            x: margin,
-            y: currentY,
-            size: 10,
-            font: boldFont,
-            color: rgb(0.4, 0.4, 0.8),
-          });
-          currentY = addWrappedText(storyPage, text, margin, currentY - 20, contentWidth, 12, font);
-          currentY -= 20; // Space between languages
-        }
       }
     }
+
+    console.log('Saving PDF...');
 
     // Serialize PDF to bytes
     const pdfBytes = await pdfDoc.save();
     const pdfBuffer = Buffer.from(pdfBytes);
     
-    // Send to Telegram if bot token is configured
+    console.log('PDF generated successfully, size:', pdfBuffer.length, 'bytes');
+
+    // Send to Telegram if configured
     if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID) {
       try {
-        const FormData = (await import('form-data')).default;
+        console.log('Attempting to send to Telegram...');
+        
+        // Use multipart form data with fetch
         const formData = new FormData();
+        const blob = new Blob([pdfBuffer], { type: 'application/pdf' });
         formData.append('chat_id', process.env.TELEGRAM_CHAT_ID);
-        formData.append('document', pdfBuffer, {
-          filename: `${childName}-storybook.pdf`,
-          contentType: 'application/pdf',
-        });
+        formData.append('document', blob, `${childName}-storybook.pdf`);
         formData.append('caption', `📚 ${childName}'s Storybook is ready!\n\nLanguages: ${languages.map(l => l.toUpperCase()).join(' + ')}\n\nGenerated with love ❤️`);
         
-        await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendDocument`, {
-          method: 'POST',
-          body: formData as any,
-          headers: formData.getHeaders(),
-        });
+        const telegramRes = await fetch(
+          `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendDocument`,
+          {
+            method: 'POST',
+            body: formData,
+          }
+        );
+        
+        if (telegramRes.ok) {
+          console.log('Successfully sent to Telegram');
+        } else {
+          const error = await telegramRes.text();
+          console.error('Telegram API error:', error);
+        }
       } catch (telegramError) {
         console.error('Failed to send to Telegram:', telegramError);
         // Continue anyway - still return the PDF
@@ -211,7 +214,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('PDF generation error:', error);
     return NextResponse.json(
-      { error: 'Failed to generate PDF' },
+      { error: `Failed to generate PDF: ${error instanceof Error ? error.message : 'Unknown error'}` },
       { status: 500 }
     );
   }
